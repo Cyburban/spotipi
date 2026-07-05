@@ -1,6 +1,6 @@
-# Spotify Matrix
+# SpotiPi
 
-Shows the current Spotify album art on a 64x64 RGB matrix as a circular record. The album art is the record surface itself: it is cropped to a disk, spun while Spotify reports playback as active, and left stopped at the current angle when paused.
+Shows the current Spotify album cover full-screen on a 32x32 RGB LED matrix. The cover fills the entire panel and updates whenever the track changes; when nothing is playing, the matrix shows a dim idle frame.
 
 This uses Spotify's Web API `currently-playing` endpoint, not the browser-only Web Playback SDK. The first run opens Spotify OAuth, then the script stores a refresh token in `.cache/spotify_token.json`.
 
@@ -43,12 +43,12 @@ Then run the script on the Pi and open the printed authorization URL in your loc
 
 ## Run
 
-This is the working command to run the script on your raspberry pi:
+This is the working command to run the script on your raspberry pi with a 32x32 panel:
 
 ```bash
 sudo -E .venv/bin/python spotify_matrix.py \
-  --rows 64 \
-  --cols 64 \
+  --rows 32 \
+  --cols 32 \
   --chain-length 1 \
   --parallel 1 \
   --gpio-slowdown 4 \
@@ -71,7 +71,7 @@ For a non-Pi test that writes one PNG frame instead of using matrix hardware:
 python spotify_matrix.py --mock-output /tmp/spotify-matrix-frame.png --once
 ```
 
-To verify the album art is what spins on the disk, render four local preview frames:
+To see what a full-screen cover looks like at 32x32 without Spotify or hardware, render local preview frames:
 
 ```bash
 python spotify_matrix.py --preview-frames /tmp/spotify-matrix-preview

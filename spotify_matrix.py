@@ -392,59 +392,16 @@ def download_image(url: str) -> Image.Image:
     return Image.open(BytesIO(response.content)).convert("RGB")
 
 
-def render_record(art: Image.Image | None, angle: float, size: int) -> Image.Image:
-    frame = Image.new("RGBA", (size, size), (0, 0, 0, 255))
-    if art is None:
-        return frame.convert("RGB")
-
-    margin = max(2, size // 32)
-    disc_size = size - margin * 2
-    # The album art is the record surface: rotate it first, then cut it into a circular disk.
-    art_square = ImageOps.fit(art, (disc_size, disc_size), method=Image.Resampling.LANCZOS)
-    rotated = art_square.rotate(angle, resample=Image.Resampling.BICUBIC)
-
-    disc_mask = Image.new("L", (disc_size, disc_size), 0)
-    mask_draw = ImageDraw.Draw(disc_mask)
-    mask_draw.ellipse((0, 0, disc_size - 1, disc_size - 1), fill=255)
-    frame.paste(rotated.convert("RGBA"), (margin, margin), disc_mask)
-
-    draw = ImageDraw.Draw(frame, "RGBA")
-    outer = (margin, margin, size - margin - 1, size - margin - 1)
-    draw.ellipse(outer, outline=(6, 6, 6, 255), width=max(1, size // 32))
-
-    center = size // 2
-    label_radius = max(5, size // 11)
-    hole_radius = max(2, size // 25)
-    draw.ellipse(
-        (
-            center - label_radius,
-            center - label_radius,
-            center + label_radius,
-            center + label_radius,
-        ),
-        fill=(16, 16, 16, 210),
-        outline=(220, 220, 220, 90),
-    )
-    draw.ellipse(
-        (
-            center - hole_radius,
-            center - hole_radius,
-            center + hole_radius,
-            center + hole_radius,
-        ),
-        fill=(0, 0, 0, 255),
-    )
-    return frame.convert("RGB")
+def render_album_art(art: Image.Image, size: int) -> Image.Image:
+    # Album covers are square, so ImageOps.fit is a straight downscale to fill the panel.
+    return ImageOps.fit(art, (size, size), method=Image.Resampling.LANCZOS).convert("RGB")
 
 
 def render_idle(size: int) -> Image.Image:
     frame = Image.new("RGB", (size, size), (0, 0, 0))
     draw = ImageDraw.Draw(frame)
-    margin = max(2, size // 32)
-    draw.ellipse((margin, margin, size - margin - 1, size - margin - 1), outline=(55, 55, 55), width=2)
-    center = size // 2
-    radius = max(3, size // 18)
-    draw.ellipse((center - radius, center - radius, center + radius, center + radius), fill=(18, 18, 18))
+    margin = max(1, size // 16)
+    draw.rectangle((margin, margin, size - margin - 1, size - margin - 1), outline=(45, 45, 45))
     return frame
 
 
@@ -584,31 +541,24 @@ def run(args: argparse.Namespace) -> None:
     )
     poll_thread.start()
 
-    angle = 0.0
-    last_frame = time.monotonic()
+    shown_key: object = object()
 
     try:
         while True:
-            frame_start = time.monotonic()
             with playback_lock:
+                current_key = playback_state.art_key
                 current_art_image = playback_state.image
-                is_playing = playback_state.is_playing
 
-            now = time.monotonic()
-            delta = now - last_frame
-            last_frame = now
-
-            if is_playing and current_art_image is not None:
-                angle = (angle - 360.0 * (args.rpm / 60.0) * delta) % 360.0
-
-            image = render_record(current_art_image, angle, size) if current_art_image else idle
-            display.show(image)
+            # The cover is static, so only push a new frame when the track changes.
+            if current_key != shown_key:
+                image = render_album_art(current_art_image, size) if current_art_image else idle
+                display.show(image)
+                shown_key = current_key
 
             if args.once:
                 break
 
-            sleep_for = max(0.0, (1.0 / args.fps) - (time.monotonic() - frame_start))
-            time.sleep(sleep_for)
+            time.sleep(0.25)
     except KeyboardInterrupt:
         pass
     finally:
@@ -627,14 +577,14 @@ def positive_float(value: str) -> float:
 def render_preview_frames(directory: Path) -> None:
     directory.mkdir(parents=True, exist_ok=True)
     art = demo_album_art(96)
-    for index, angle in enumerate((0, 45, 90, 135)):
-        render_record(art, angle, 64).save(directory / f"album-disk-{index:02d}.png")
+    render_album_art(art, 32).save(directory / "album-cover-32.png")
+    render_idle(32).save(directory / "idle-32.png")
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Spin Spotify album art on a 64x64 RGB matrix.")
-    parser.add_argument("--rows", type=int, default=64)
-    parser.add_argument("--cols", type=int, default=64)
+    parser = argparse.ArgumentParser(description="Show the current Spotify album cover on a 32x32 RGB matrix.")
+    parser.add_argument("--rows", type=int, default=32)
+    parser.add_argument("--cols", type=int, default=32)
     parser.add_argument("--chain-length", type=int, default=1)
     parser.add_argument("--parallel", type=int, default=1)
     parser.add_argument("--brightness", type=int, default=65)
@@ -648,11 +598,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Avoid Pi onboard sound conflict at the cost of more possible flicker.",
     )
     parser.add_argument("--poll-seconds", type=positive_float, default=2.0)
-    parser.add_argument("--fps", type=positive_float, default=20.0)
-    parser.add_argument("--rpm", type=positive_float, default=20.0)
+    parser.add_argument("--fps", type=positive_float, default=20.0, help="Frame rate for the --test-pattern animation.")
     parser.add_argument("--token-cache", type=Path, default=Path(".cache/spotify_token.json"))
     parser.add_argument("--mock-output", type=Path, help="Write the current frame PNG instead of using RGB matrix hardware.")
-    parser.add_argument("--preview-frames", type=Path, help="Render sample spinning-album-art disk frames and exit.")
+    parser.add_argument("--preview-frames", type=Path, help="Render sample album-cover frames and exit.")
     parser.add_argument("--auth-only", action="store_true", help="Authorize Spotify, cache the token, and exit without using the matrix.")
     parser.add_argument("--test-pattern", action="store_true", help="Show a bright moving color test pattern without using Spotify.")
     parser.add_argument("--once", action="store_true", help="Render one frame and exit.")
